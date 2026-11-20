@@ -40,6 +40,12 @@ public abstract class JavaCodeSandboxTemplate implements CodeSandbox {
         ExecuteMessage compileFileExecuteMessage = compileFile(userCodeFile);
         System.out.println(compileFileExecuteMessage);
 
+        // 编译失败:直接返回"编译错误"结果,不执行代码、不抛异常
+        if (compileFileExecuteMessage.getExitValue() != null && compileFileExecuteMessage.getExitValue() != 0) {
+            deleteFile(userCodeFile);
+            return getCompileErrorResponse(compileFileExecuteMessage);
+        }
+
         // 3. 执行代码，得到输出结果
         List<ExecuteMessage> executeMessageList = runFile(userCodeFile, inputList);
 
@@ -82,17 +88,16 @@ public abstract class JavaCodeSandboxTemplate implements CodeSandbox {
      */
     public ExecuteMessage compileFile(File userCodeFile) {
         String compileCmd = String.format("javac -encoding utf-8 %s", userCodeFile.getAbsolutePath());
+        ExecuteMessage executeMessage = new ExecuteMessage();
         try {
             Process compileProcess = Runtime.getRuntime().exec(compileCmd);
-            ExecuteMessage executeMessage = ProcessUtils.runProcessAndGetMessage(compileProcess, "编译");
-            if (executeMessage.getExitValue() != 0) {
-                throw new RuntimeException("编译错误");
-            }
-            return executeMessage;
+            executeMessage = ProcessUtils.runProcessAndGetMessage(compileProcess, "编译");
         } catch (Exception e) {
-//            return getErrorResponse(e);
-            throw new RuntimeException(e);
+            // 编译命令启动失败等系统错误:作为编译错误返回(exitValue 置 1),不抛异常以免炸链路
+            executeMessage.setExitValue(1);
+            executeMessage.setErrorMessage("编译错误:" + e.getMessage());
         }
+        return executeMessage;
     }
 
     /**
@@ -138,8 +143,9 @@ public abstract class JavaCodeSandboxTemplate implements CodeSandbox {
     public ExecuteCodeResponse getOutputResponse(List<ExecuteMessage> executeMessageList) {
         ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
         List<String> outputList = new ArrayList<>();
-        // 取用时最大值，便于判断是否超时
+        // 取用时、内存的最大值（多次用例执行取峰值）
         long maxTime = 0;
+        long maxMemory = 0;
         for (ExecuteMessage executeMessage : executeMessageList) {
             String errorMessage = executeMessage.getErrorMessage();
             if (StrUtil.isNotBlank(errorMessage)) {
@@ -153,6 +159,11 @@ public abstract class JavaCodeSandboxTemplate implements CodeSandbox {
             if (time != null) {
                 maxTime = Math.max(maxTime, time);
             }
+            // 聚合内存峰值（单位 KB；原生沙箱未采集时为 null，跳过）
+            Long memory = executeMessage.getMemory();
+            if (memory != null) {
+                maxMemory = Math.max(maxMemory, memory);
+            }
         }
         // 正常运行完成
         if (outputList.size() == executeMessageList.size()) {
@@ -161,8 +172,8 @@ public abstract class JavaCodeSandboxTemplate implements CodeSandbox {
         executeCodeResponse.setOutputList(outputList);
         JudgeInfo judgeInfo = new JudgeInfo();
         judgeInfo.setTime(maxTime);
-        // 要借助第三方库来获取内存占用，非常麻烦，此处不做实现
-//        judgeInfo.setMemory();
+        // 内存单位为 KB；0 表示沙箱未采集到内存（如原生沙箱），判题侧将跳过内存校验
+        judgeInfo.setMemory(maxMemory);
         executeCodeResponse.setJudgeInfo(judgeInfo);
         return executeCodeResponse;
     }
@@ -180,6 +191,24 @@ public abstract class JavaCodeSandboxTemplate implements CodeSandbox {
             return del;
         }
         return true;
+    }
+
+    /**
+     * 编译失败时的响应。
+     *
+     * <p>message 含"编译错误"+编译输出,status=2(沙箱错误),HTTP 正常返回。</p>
+     *
+     * @param compileMessage 编译结果(exitValue != 0)
+     * @return 编译错误响应
+     */
+    private ExecuteCodeResponse getCompileErrorResponse(ExecuteMessage compileMessage) {
+        ExecuteCodeResponse executeCodeResponse = new ExecuteCodeResponse();
+        executeCodeResponse.setOutputList(new ArrayList<>());
+        String errorMessage = compileMessage.getErrorMessage();
+        executeCodeResponse.setMessage("编译错误" + (StrUtil.isNotBlank(errorMessage) ? ":" + errorMessage : ""));
+        executeCodeResponse.setStatus(2);
+        executeCodeResponse.setJudgeInfo(new JudgeInfo());
+        return executeCodeResponse;
     }
 
     /**

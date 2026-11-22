@@ -1,5 +1,10 @@
 server:
   port: 8090
+
+# 沙箱实现类型：native=原生进程执行（默认，不采集内存），docker=容器隔离执行（可采集内存）
+codesandbox:
+  type: native
+
 #spring:
 #  datasource:
 #    password: 123456

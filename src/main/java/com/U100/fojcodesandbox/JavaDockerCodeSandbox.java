@@ -195,7 +195,8 @@ public class JavaDockerCodeSandbox extends JavaCodeSandboxTemplate {
             executeMessage.setMessage(message[0]);
             executeMessage.setErrorMessage(errorMessage[0]);
             executeMessage.setTime(time);
-            executeMessage.setMemory(maxMemory[0]);
+            // docker stats 返回的内存占用单位是字节，统一换算为 KB，与判题配置 memoryLimit（KB）保持一致
+            executeMessage.setMemory(maxMemory[0] / 1024);
             executeMessageList.add(executeMessage);
         }
         return executeMessageList;
